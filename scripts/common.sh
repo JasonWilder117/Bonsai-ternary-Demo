@@ -120,6 +120,34 @@ step()  { printf "${_CLR_CYAN}==>    %s${_CLR_RESET}\n" "$*"; }
 
 CTX_SIZE_DEFAULT=0
 
+# ── Vulkan detection ──
+# The `vulkaninfo` CLI ships in the separate `vulkan-tools` package, NOT with
+# the GPU driver, so keying detection off it alone misclassifies machines that
+# have a perfectly working Vulkan loader + ICD as CPU-only. Treat Vulkan as
+# available when `vulkaninfo` is on PATH, OR when the loader (libvulkan.so.1)
+# is present AND at least one ICD manifest exists.
+bonsai_has_vulkan() {
+    command -v vulkaninfo >/dev/null 2>&1 && return 0
+
+    _have_loader=false
+    if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q 'libvulkan\.so\.1'; then
+        _have_loader=true
+    else
+        for _d in /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/local/lib; do
+            if [ -e "$_d/libvulkan.so.1" ]; then _have_loader=true; break; fi
+        done
+    fi
+    [ "$_have_loader" = false ] && return 1
+
+    for _dir in /usr/share/vulkan/icd.d /etc/vulkan/icd.d /usr/local/share/vulkan/icd.d "${XDG_DATA_HOME:-$HOME/.local/share}/vulkan/icd.d"; do
+        [ -d "$_dir" ] || continue
+        for _icd in "$_dir"/*.json; do
+            [ -e "$_icd" ] && return 0
+        done
+    done
+    return 1
+}
+
 # GPU layer offload: 99 = offload all layers to GPU, 0 = CPU only.
 # Override with BONSAI_NGL env var if needed.
 bonsai_llama_ngl() {
@@ -131,7 +159,7 @@ bonsai_llama_ngl() {
         echo 99  # CUDA
     elif command -v rocminfo >/dev/null 2>&1 || command -v hipcc >/dev/null 2>&1; then
         echo 99  # ROCm/HIP
-    elif command -v vulkaninfo >/dev/null 2>&1; then
+    elif bonsai_has_vulkan; then
         echo 99  # Vulkan
     elif [ "$(uname -s)" = "Darwin" ]; then
         echo 99  # Apple Silicon — Metal

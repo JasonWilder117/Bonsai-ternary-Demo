@@ -49,7 +49,7 @@ case "$OS" in
             _gpu_type="cuda"
         elif command -v rocminfo >/dev/null 2>&1 || command -v rocm-smi >/dev/null 2>&1 || command -v hipcc >/dev/null 2>&1; then
             _gpu_type="rocm"
-        elif command -v vulkaninfo >/dev/null 2>&1; then
+        elif bonsai_has_vulkan; then
             _gpu_type="vulkan"
         fi
 

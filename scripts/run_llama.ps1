@@ -45,6 +45,10 @@ $BinCandidates = @(
     "llama.cpp\build\bin\Release\llama-cli.exe",
     "llama.cpp\build\bin\llama-cli.exe"
 )
+# BONSAI_GPU forces a backend's bin dir first, so it wins over a stale bin\cuda.
+$GpuPref = if ($env:BONSAI_GPU) { $env:BONSAI_GPU.ToLowerInvariant() } else { $null }
+if ($GpuPref -eq "rocm") { $GpuPref = "hip" }
+if ($GpuPref) { $BinCandidates = @("bin\$GpuPref\llama-cli.exe") + $BinCandidates }
 $BinRel = $BinCandidates | Where-Object { Test-Path (Join-Path $DemoDir $_) } | Select-Object -First 1
 if (-not $BinRel) {
     Write-Host "[ERR] llama-cli.exe not found. Run .\setup.ps1 first." -ForegroundColor Red

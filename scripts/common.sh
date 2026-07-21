@@ -172,6 +172,21 @@ bonsai_llama_ngl() {
     fi
 }
 
+# Ordered bin/ dirs to search for the llama.cpp executables. BONSAI_GPU
+# (cuda|rocm|vulkan|cpu) is tried first so a forced backend wins even when
+# another backend's binaries are also present (e.g. a stale bin/cuda from an
+# earlier auto-detected setup run).
+bonsai_bin_dirs() {
+    _pref=""
+    case "${BONSAI_GPU:-}" in
+        cuda)   _pref="bin/cuda" ;;
+        rocm)   _pref="bin/rocm bin/hip" ;;
+        vulkan) _pref="bin/vulkan" ;;
+        cpu)    _pref="bin/cpu" ;;
+    esac
+    echo "$_pref bin/mac bin/cuda bin/rocm bin/hip bin/vulkan bin/cpu llama.cpp/build/bin llama.cpp/build-mac/bin llama.cpp/build-cuda/bin"
+}
+
 # Image-token cap for the 27B vision models (llama-server --image-max-tokens).
 # Big images cost a lot of prefill on slower hardware (a 12 MP photo is
 # ~4000 vision tokens); capping at 1024 makes them much faster with little

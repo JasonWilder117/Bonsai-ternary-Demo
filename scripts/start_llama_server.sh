@@ -48,7 +48,7 @@ fi
 
 # ── Find binary (search all known locations) ──
 BIN=""
-for _d in bin/mac bin/cuda bin/rocm bin/hip bin/vulkan bin/cpu llama.cpp/build/bin llama.cpp/build-mac/bin llama.cpp/build-cuda/bin; do
+for _d in $(bonsai_bin_dirs); do
     [ -f "$DEMO_DIR/$_d/llama-server" ] && BIN="$DEMO_DIR/$_d/llama-server" && break
 done
 if [ -z "$BIN" ]; then

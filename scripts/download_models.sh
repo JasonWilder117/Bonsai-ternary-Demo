@@ -20,7 +20,7 @@ assert_valid_model
 DEMO_DIR="$(resolve_demo_dir)"
 cd "$DEMO_DIR"
 
-VENV_PY="$DEMO_DIR/.venv/bin/python"
+VENV_PY="$(bonsai_python "$DEMO_DIR")"
 
 # ── HuggingFace auth ──
 # Use BONSAI_TOKEN (env, or the gitignored .bonsai_token file) if present.

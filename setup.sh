@@ -18,6 +18,18 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 VENV_PY="$VENV_DIR/bin/python"
 PYTHON_VERSION="3.11"
 
+# ── Python env backend: conda (opt-in) or uv/.venv (default) ──
+# BONSAI_CONDA=1        -> create/use conda env "bonsai-demo"
+# BONSAI_CONDA=<name>   -> create/use conda env <name>
+# unset / BONSAI_CONDA=0 -> use the built-in uv-managed .venv
+USE_CONDA=0
+CONDA_ENV_NAME=""
+case "${BONSAI_CONDA:-0}" in
+    ""|0) ;;
+    1) USE_CONDA=1; CONDA_ENV_NAME="bonsai-demo" ;;
+    *) USE_CONDA=1; CONDA_ENV_NAME="$BONSAI_CONDA" ;;
+esac
+
 # ────────────────────────────────────────────────────
 #  Helpers
 # ────────────────────────────────────────────────────
@@ -106,6 +118,27 @@ _version_ge() {
         [ "$_ap" -lt "$_bp" ] 2>/dev/null && return 1
     done
     return 0
+}
+
+# Locate the conda executable (PATH, then common Anaconda/Miniconda installs).
+_conda_exe() {
+    if command -v conda >/dev/null 2>&1; then command -v conda; return 0; fi
+    for _c in "$HOME/anaconda3/bin/conda" "$HOME/miniconda3/bin/conda" \
+              "$HOME/miniforge3/bin/conda" "$HOME/mambaforge/bin/conda" \
+              /opt/conda/bin/conda; do
+        [ -x "$_c" ] && { echo "$_c"; return 0; }
+    done
+    return 1
+}
+
+# Install Python packages into the active env: conda uses pip inside the env,
+# uv uses `uv pip install` against the venv interpreter.
+pyinstall() {
+    if [ "$USE_CONDA" = 1 ]; then
+        "$VENV_PY" -m pip install "$@"
+    else
+        uv pip install --python "$VENV_PY" "$@"
+    fi
 }
 
 # ── Model selection ──
@@ -212,51 +245,77 @@ case "$OS" in
 esac
 
 # ────────────────────────────────────────────────────
-#  3. Install uv
+#  3-5. Python environment + base dependencies
+#  Backend: conda (BONSAI_CONDA) or the built-in uv/.venv (default).
 # ────────────────────────────────────────────────────
-UV_MIN="0.7.0"
-
-_uv_ok() {
-    command -v uv >/dev/null 2>&1 || return 1
-    _ver=$(uv --version 2>/dev/null | awk '{print $2}')
-    [ -n "$_ver" ] && _version_ge "$_ver" "$UV_MIN"
-}
-
-step "Checking uv ..."
-if _uv_ok; then
-    info "uv $(uv --version 2>/dev/null | awk '{print $2}') found."
-else
-    step "Installing uv ..."
-    _tmp=$(mktemp)
-    download "https://astral.sh/uv/install.sh" "$_tmp"
-    sh "$_tmp" </dev/null
-    rm -f "$_tmp"
-    [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
-    export PATH="$HOME/.local/bin:$PATH"
-    if ! _uv_ok; then
-        err "uv installation failed. Install manually: https://docs.astral.sh/uv/"
+if [ "$USE_CONDA" = 1 ]; then
+    CONDA="$(_conda_exe)" || {
+        err "BONSAI_CONDA is set but no conda/Anaconda install was found."
+        echo "  Install Anaconda/Miniconda, or unset BONSAI_CONDA to use the built-in uv env."
         exit 1
+    }
+    step "Setting up conda env '$CONDA_ENV_NAME' (Python $PYTHON_VERSION) ..."
+    if "$CONDA" env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+        info "conda env '$CONDA_ENV_NAME' already exists."
+    else
+        "$CONDA" create -y -n "$CONDA_ENV_NAME" "python=$PYTHON_VERSION"
+        info "Created conda env '$CONDA_ENV_NAME'."
     fi
-    info "uv installed."
-fi
+    # Resolve the env prefix and record it so the run scripts pick it up.
+    VENV_DIR="$("$CONDA" run -n "$CONDA_ENV_NAME" python -c 'import sys; print(sys.prefix)')"
+    VENV_PY="$VENV_DIR/bin/python"
+    [ -x "$VENV_PY" ] || { err "conda env python not found at $VENV_PY"; exit 1; }
+    printf "%s" "$VENV_DIR" > "$SCRIPT_DIR/.bonsai_env"
 
-# ────────────────────────────────────────────────────
-#  4. Create Python venv
-# ────────────────────────────────────────────────────
-step "Setting up Python environment ..."
-if [ -x "$VENV_PY" ]; then
-    info "Existing venv found at $VENV_DIR"
+    step "Installing base Python dependencies ..."
+    "$VENV_PY" -m pip install --upgrade pip >/dev/null
+    "$VENV_PY" -m pip install .
+    info "Base deps installed (cmake, ninja, setuptools, huggingface-hub) into conda env '$CONDA_ENV_NAME'."
 else
-    uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
-    info "Created venv with Python $PYTHON_VERSION"
-fi
+    # Not using conda: make sure no stale marker points the run scripts elsewhere.
+    rm -f "$SCRIPT_DIR/.bonsai_env" 2>/dev/null || true
 
-# ────────────────────────────────────────────────────
-#  5. Install Python deps (cmake, ninja, huggingface-hub, etc.)
-# ────────────────────────────────────────────────────
-step "Installing base Python dependencies ..."
-uv sync
-info "Base deps installed (cmake, ninja, setuptools, huggingface-cli)."
+    # ── 3. Install uv ──
+    UV_MIN="0.7.0"
+
+    _uv_ok() {
+        command -v uv >/dev/null 2>&1 || return 1
+        _ver=$(uv --version 2>/dev/null | awk '{print $2}')
+        [ -n "$_ver" ] && _version_ge "$_ver" "$UV_MIN"
+    }
+
+    step "Checking uv ..."
+    if _uv_ok; then
+        info "uv $(uv --version 2>/dev/null | awk '{print $2}') found."
+    else
+        step "Installing uv ..."
+        _tmp=$(mktemp)
+        download "https://astral.sh/uv/install.sh" "$_tmp"
+        sh "$_tmp" </dev/null
+        rm -f "$_tmp"
+        [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+        export PATH="$HOME/.local/bin:$PATH"
+        if ! _uv_ok; then
+            err "uv installation failed. Install manually: https://docs.astral.sh/uv/"
+            exit 1
+        fi
+        info "uv installed."
+    fi
+
+    # ── 4. Create Python venv ──
+    step "Setting up Python environment ..."
+    if [ -x "$VENV_PY" ]; then
+        info "Existing venv found at $VENV_DIR"
+    else
+        uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+        info "Created venv with Python $PYTHON_VERSION"
+    fi
+
+    # ── 5. Install Python deps (cmake, ninja, huggingface-hub, etc.) ──
+    step "Installing base Python dependencies ..."
+    uv sync
+    info "Base deps installed (cmake, ninja, setuptools, huggingface-cli)."
+fi
 
 # ────────────────────────────────────────────────────
 #  6. Download models from HuggingFace
@@ -344,13 +403,13 @@ raise SystemExit(0 if v >= (0, 31) else 1)
     else
         step "Building MLX from source (this takes 2-5 minutes on first install) ..."
         # --no-build-isolation required: MLX's C++/Metal build needs pre-installed setuptools
-        uv pip install --python "$VENV_PY" -e mlx/ --no-build-isolation
+        pyinstall -e mlx/ --no-build-isolation
         step "Installing MLX Python deps (mlx-lm, torch, transformers, ...) ..."
         # mlx-lm >= 0.31 is required for the 27B (qwen3_5) architecture. The
         # released 27B configs are plain dense (no num_experts field), and stock
         # mlx-lm builds a SparseMoeBlock only when num_experts > 0 — so it loads
         # them as dense out of the box, no source patch needed.
-        uv pip install --python "$VENV_PY" \
+        pyinstall \
             "mlx-lm==0.31.2" "torch==2.10.0" "transformers==5.2.0" \
             "safetensors==0.7.0" "tokenizers==0.22.2" "sentencepiece==0.2.1" \
             "protobuf==7.34.0" "numpy==2.4.2" "gguf==0.18.0"
@@ -387,10 +446,10 @@ if [ "${BONSAI_OPENWEBUI:-1}" != "0" ]; then
         step "Installing Open WebUI (large download, a few minutes) ..."
         # Install via the pinned `webui` extra in pyproject.toml (open-webui==0.10.2)
         # rather than an unpinned name, so the version stays reproducible.
-        if uv pip install --python "$VENV_PY" ".[webui]"; then
+        if pyinstall ".[webui]"; then
             info "Open WebUI installed."
         else
-            warn "Open WebUI install failed — install it manually with 'uv pip install \".[webui]\"' before running scripts/start_openwebui.sh."
+            warn "Open WebUI install failed — install it manually into the env before running scripts/start_openwebui.sh."
         fi
     fi
 fi
@@ -400,16 +459,38 @@ fi
 #    Python, make plots, and pull market data. Isolated venv, all platforms.
 #    Skip with BONSAI_CODE_INTERPRETER=0. ──
 if [ "${BONSAI_CODE_INTERPRETER:-1}" != "0" ]; then
-    step "Setting up the code-interpreter venv (Jupyter + plotting / data libs) ..."
-    JUP_VENV="$SCRIPT_DIR/.venv-jupyter"
-    if [ -x "$JUP_VENV/bin/jupyter" ]; then
-        info "code-interpreter venv already present."
-    elif uv venv "$JUP_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1 \
-        && uv pip install --python "$JUP_VENV/bin/python" \
-            jupyter-server ipykernel matplotlib numpy pandas scipy sympy pillow requests yfinance; then
-        info "code-interpreter venv ready (.venv-jupyter)."
+    step "Setting up the code-interpreter environment (Jupyter + plotting / data libs) ..."
+    _JUP_PKGS="jupyter-server ipykernel matplotlib numpy pandas scipy sympy pillow requests yfinance"
+    if [ "$USE_CONDA" = 1 ]; then
+        # Isolated in its own conda env (mirrors the uv .venv-jupyter isolation)
+        # so its scientific stack never conflicts with Open WebUI's pins.
+        JUP_ENV_NAME="${CONDA_ENV_NAME}-jupyter"
+        if "$CONDA" env list | awk '{print $1}' | grep -qx "$JUP_ENV_NAME"; then
+            info "code-interpreter conda env '$JUP_ENV_NAME' already exists."
+        else
+            "$CONDA" create -y -n "$JUP_ENV_NAME" "python=$PYTHON_VERSION" >/dev/null
+        fi
+        JUP_DIR="$("$CONDA" run -n "$JUP_ENV_NAME" python -c 'import sys; print(sys.prefix)' 2>/dev/null)"
+        # shellcheck disable=SC2086
+        if [ -n "$JUP_DIR" ] && [ -x "$JUP_DIR/bin/python" ] \
+            && "$JUP_DIR/bin/python" -m pip install $_JUP_PKGS >/dev/null; then
+            printf "%s" "$JUP_DIR" > "$SCRIPT_DIR/.bonsai_jupyter_env"
+            info "code-interpreter conda env ready ('$JUP_ENV_NAME')."
+        else
+            warn "code-interpreter setup failed — Open WebUI code execution will be unavailable."
+        fi
     else
-        warn "code-interpreter venv setup failed — Open WebUI code execution will be unavailable."
+        rm -f "$SCRIPT_DIR/.bonsai_jupyter_env" 2>/dev/null || true
+        JUP_VENV="$SCRIPT_DIR/.venv-jupyter"
+        # shellcheck disable=SC2086
+        if [ -x "$JUP_VENV/bin/jupyter" ]; then
+            info "code-interpreter venv already present."
+        elif uv venv "$JUP_VENV" --python "$PYTHON_VERSION" >/dev/null 2>&1 \
+            && uv pip install --python "$JUP_VENV/bin/python" $_JUP_PKGS; then
+            info "code-interpreter venv ready (.venv-jupyter)."
+        else
+            warn "code-interpreter venv setup failed — Open WebUI code execution will be unavailable."
+        fi
     fi
 fi
 
@@ -421,5 +502,11 @@ echo "========================================="
 echo "   Setup complete! (BONSAI_FAMILY=${BONSAI_FAMILY} BONSAI_MODEL=${BONSAI_MODEL})"
 echo "========================================="
 echo ""
+if [ "$USE_CONDA" = 1 ]; then
+    echo "  Python env: conda env '$CONDA_ENV_NAME' (recorded in .bonsai_env)."
+    echo "  The run scripts use it automatically; to work in it directly:"
+    echo "      conda activate $CONDA_ENV_NAME"
+    echo ""
+fi
 echo "  See README.md for usage examples."
 echo ""

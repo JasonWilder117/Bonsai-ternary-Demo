@@ -325,7 +325,7 @@ export CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS="${BONSAI_MAX_TOOL_ITERS:-30}"
 #    .venv-jupyter that setup.sh builds; falls back to browser Pyodide if it's
 #    missing. Skip with BONSAI_CODE_INTERPRETER=0. ──
 BONSAI_CODE_INTERPRETER="${BONSAI_CODE_INTERPRETER:-1}"
-_JUP_PY="$DEMO_DIR/.venv-jupyter/bin/jupyter"
+_JUP_PY="$(bonsai_jupyter "$DEMO_DIR" 2>/dev/null || true)"
 if [ "$BONSAI_CODE_INTERPRETER" != "0" ] && [ -x "$_JUP_PY" ]; then
     _JUP_PORT="${BONSAI_JUPYTER_PORT:-8888}"
     _JUP_TOKEN="$(head -c 24 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' || echo "bonsai-jupyter-$$")"

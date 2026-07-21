@@ -210,8 +210,7 @@ bonsai_image_max_tokens() {
 # 4, the n_blocks=4 packing standard, if the metadata can't be read (e.g. gguf
 # module missing). Arg: path to the drafter GGUF.
 bonsai_dspark_block_size() {
-    _py=".venv/bin/python"
-    [ -x "$_py" ] || _py="python3"
+    _py="$(bonsai_python "${DEMO_DIR:-}")"
     _bs="$("$_py" - "$1" 2>/dev/null <<'PYEOF'
 import sys
 try:
@@ -263,14 +262,70 @@ resolve_demo_dir() {
     echo "$(cd "$_script_dir/.." && pwd)"
 }
 
-# ── Ensure .venv is active (for MLX / Python scripts) ──
+# ── Python environment resolution ──
+# The demo's Python env can be either the uv-managed .venv (default) or a conda
+# env created by setup.sh (BONSAI_CONDA). bonsai_env_dir prints the prefix of
+# whichever is in effect, in priority order:
+#   1. an already-activated env ($VIRTUAL_ENV / $CONDA_PREFIX)
+#   2. a conda env prefix recorded by setup.sh in .bonsai_env
+#   3. the uv-managed .venv
+# Prints nothing and returns 1 if none is usable.
+bonsai_env_dir() {
+    _demo="${1:-${DEMO_DIR:-.}}"
+    if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+        echo "$VIRTUAL_ENV"; return 0
+    fi
+    if [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+        echo "$CONDA_PREFIX"; return 0
+    fi
+    if [ -f "$_demo/.bonsai_env" ]; then
+        _e="$(tr -d '\r\n' < "$_demo/.bonsai_env")"
+        [ -n "$_e" ] && [ -x "$_e/bin/python" ] && { echo "$_e"; return 0; }
+    fi
+    [ -x "$_demo/.venv/bin/python" ] && { echo "$_demo/.venv"; return 0; }
+    return 1
+}
+
+# Path to the demo's Python interpreter (env python, else system python3/python).
+bonsai_python() {
+    _e="$(bonsai_env_dir "${1:-}" 2>/dev/null)" && { echo "$_e/bin/python"; return 0; }
+    command -v python3 >/dev/null 2>&1 && { echo python3; return 0; }
+    echo python
+}
+
+# Path to the code-interpreter `jupyter` (isolated from the main env):
+# the uv `.venv-jupyter`, else a conda env recorded in .bonsai_jupyter_env.
+# Prints nothing and returns 1 if the code-interpreter env is not installed.
+bonsai_jupyter() {
+    _demo="${1:-${DEMO_DIR:-.}}"
+    [ -x "$_demo/.venv-jupyter/bin/jupyter" ] && { echo "$_demo/.venv-jupyter/bin/jupyter"; return 0; }
+    if [ -f "$_demo/.bonsai_jupyter_env" ]; then
+        _e="$(tr -d '\r\n' < "$_demo/.bonsai_jupyter_env")"
+        [ -n "$_e" ] && [ -x "$_e/bin/jupyter" ] && { echo "$_e/bin/jupyter"; return 0; }
+    fi
+    return 1
+}
+
+# ── Ensure a Python env is active (for MLX / Open WebUI / Python scripts) ──
 ensure_venv() {
     _demo="$1"
-    if [ -z "$VIRTUAL_ENV" ] && [ -f "$_demo/.venv/bin/activate" ]; then
+    # Already inside an activated env (venv or conda) — nothing to do.
+    if [ -n "${VIRTUAL_ENV:-}" ] || [ -n "${CONDA_PREFIX:-}" ]; then
+        return 0
+    fi
+    # Prefer a real venv activation (sets VIRTUAL_ENV and friends).
+    if [ -f "$_demo/.venv/bin/activate" ]; then
+        # shellcheck disable=SC1091
         . "$_demo/.venv/bin/activate"
+        return 0
     fi
-    if [ -z "$VIRTUAL_ENV" ]; then
-        err "Python venv not found. Run ./setup.sh first."
-        exit 1
+    # Otherwise a conda env recorded by setup.sh: put its bin on PATH so the
+    # env's console scripts (open-webui, jupyter, ...) resolve.
+    _env="$(bonsai_env_dir "$_demo" 2>/dev/null || true)"
+    if [ -n "$_env" ] && [ -x "$_env/bin/python" ]; then
+        PATH="$_env/bin:$PATH"; export PATH
+        return 0
     fi
+    err "Python environment not found. Run ./setup.sh first."
+    exit 1
 }

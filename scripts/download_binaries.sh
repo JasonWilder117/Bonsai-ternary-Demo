@@ -53,6 +53,18 @@ case "$OS" in
             _gpu_type="vulkan"
         fi
 
+        # BONSAI_GPU overrides auto-detection (cuda|rocm|vulkan|cpu). Useful when
+        # auto-detect picks a backend with no working build for the hardware
+        # (e.g. a Blackwell NVIDIA GPU with no matching CUDA build -> force vulkan).
+        if [ -n "${BONSAI_GPU:-}" ]; then
+            case "$BONSAI_GPU" in
+                cpu)               _gpu_type="" ;;
+                cuda|rocm|vulkan)  _gpu_type="$BONSAI_GPU" ;;
+                *) err "Unknown BONSAI_GPU='$BONSAI_GPU'. Valid values: cuda, rocm, vulkan, cpu"; exit 1 ;;
+            esac
+            info "GPU backend forced via BONSAI_GPU=$BONSAI_GPU"
+        fi
+
         # Guard CUDA/ROCm to x64 only (no arm64 builds available)
         if [ "$_arch_tag" != "x64" ] && { [ "$_gpu_type" = "cuda" ] || [ "$_gpu_type" = "rocm" ]; }; then
             warn "$_gpu_type detected but no $_gpu_type build available for $_arch_tag — falling back."
@@ -60,7 +72,10 @@ case "$OS" in
         fi
 
         # Resolve CUDA version tag
-        if [ "$_gpu_type" = "cuda" ]; then
+        if [ "$_gpu_type" = "cuda" ] && [ -z "$_cuda_ver" ]; then
+            warn "CUDA forced via BONSAI_GPU but no CUDA version detected — defaulting to CUDA 12.4 build"
+            _cuda_tag="12.4"
+        elif [ "$_gpu_type" = "cuda" ]; then
             _major="${_cuda_ver%%.*}"
             _minor="${_cuda_ver#*.}"
             if [ "$_major" -ge 13 ] || { [ "$_major" -eq 12 ] && [ "$_minor" -ge 8 ]; }; then

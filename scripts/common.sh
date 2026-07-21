@@ -153,6 +153,10 @@ bonsai_has_vulkan() {
 bonsai_llama_ngl() {
     if [ -n "${BONSAI_NGL:-}" ]; then
         echo "$BONSAI_NGL"
+    elif [ "${BONSAI_GPU:-}" = "cpu" ]; then
+        echo 0   # backend forced to CPU
+    elif [ -n "${BONSAI_GPU:-}" ]; then
+        echo 99  # backend forced to a GPU (cuda/rocm/vulkan)
     elif [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "x86_64" ]; then
         echo 0  # Intel Mac — no Metal
     elif command -v nvidia-smi >/dev/null 2>&1 || command -v nvcc >/dev/null 2>&1; then

@@ -156,8 +156,24 @@ uv pip install --python $VenvPy huggingface-hub
 Write-Host "[OK] Dependencies installed." -ForegroundColor Green
 
 # ── 6. Detect GPU: NVIDIA (CUDA) or AMD (HIP) ──
+# BONSAI_GPU forces a backend (cuda|rocm|vulkan|cpu) and bypasses auto-detection.
+# Needed e.g. on a very new NVIDIA GPU (Blackwell / sm_120): only the older
+# CUDA 12.4 build is published for Windows, which lacks Blackwell kernels, so
+# force "vulkan" to use the working Vulkan driver instead.
 $GpuType = $null
 $CudaTag = "12.4"
+
+if ($env:BONSAI_GPU) {
+    $GpuType = $env:BONSAI_GPU.ToLowerInvariant()
+    if ($GpuType -eq "rocm") { $GpuType = "hip" }
+    if ($GpuType -notin @("cuda", "hip", "vulkan", "cpu")) {
+        Write-Host "[ERR] Unknown BONSAI_GPU='$env:BONSAI_GPU'. Valid values: cuda, rocm, vulkan, cpu" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[OK] GPU backend forced via BONSAI_GPU -> $GpuType" -ForegroundColor Green
+}
+
+if (-not $GpuType) {
 foreach ($p in @(
     (Get-Command nvidia-smi -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
     "$env:ProgramFiles\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
@@ -180,9 +196,11 @@ foreach ($p in @(
         } catch {}
     }
 }
+}
+
 if ($GpuType -eq "cuda") {
     Write-Host "[OK] NVIDIA GPU detected (CUDA $CudaTag)" -ForegroundColor Green
-} else {
+} elseif (-not $GpuType) {
     # Check for AMD HIP SDK
     $HipPath = $null
     if ($env:HIP_PATH -and (Test-Path $env:HIP_PATH)) {
@@ -205,9 +223,9 @@ if ($GpuType -eq "cuda") {
     if ($HipPath) {
         $GpuType = "hip"
         Write-Host "[OK] AMD HIP/ROCm toolchain found at $HipPath" -ForegroundColor Green
-    } elseif (Get-Command vulkaninfo -ErrorAction SilentlyContinue) {
+    } elseif ((Get-Command vulkaninfo -ErrorAction SilentlyContinue) -or (Test-Path "$env:SystemRoot\System32\vulkan-1.dll")) {
         $GpuType = "vulkan"
-        Write-Host "[OK] Vulkan SDK detected." -ForegroundColor Green
+        Write-Host "[OK] Vulkan runtime detected." -ForegroundColor Green
     } else {
         $GpuType = "cpu"
         Write-Host "[INFO] No GPU toolchain detected. Will use CPU build." -ForegroundColor Yellow

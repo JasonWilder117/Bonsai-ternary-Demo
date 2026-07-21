@@ -78,6 +78,30 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\setup.ps1
 ```
 
+### Updating
+
+Pull the latest changes and re-run setup (safe to re-run — it skips completed steps):
+
+```bash
+git pull
+./setup.sh
+```
+
+### Python env: conda (optional, macOS / Linux)
+
+By default `setup.sh` manages Python with [uv](https://docs.astral.sh/uv/) in a local `.venv`. If you'd rather use your existing Anaconda/Miniconda, set `BONSAI_CONDA`:
+
+```bash
+git pull
+# Create/use a conda env named "bonsai-demo" (Python 3.11) instead of the .venv
+BONSAI_CONDA=1 BONSAI_MODEL=1.7B ./setup.sh
+./scripts/start_openwebui.sh          # then open the printed localhost URL
+```
+
+- `BONSAI_CONDA=1` → env named `bonsai-demo`; `BONSAI_CONDA=myname` → custom name.
+- It installs base deps + Open WebUI into that env, plus an isolated `<name>-jupyter` env for the code interpreter, and records the env path in `.bonsai_env` so the run scripts pick it up automatically (no need to `conda activate` first — though `conda activate bonsai-demo` also works).
+- NVIDIA GPUs (e.g. RTX 3080) are auto-detected as CUDA — no extra flags needed. Leave `BONSAI_CONDA` unset to keep the default uv/`.venv` path.
+
 ### Switching families and sizes
 
 You can switch between the Ternary (default) and 1-bit families, and different model sizes instantly:
